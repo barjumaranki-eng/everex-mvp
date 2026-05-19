@@ -1,0 +1,704 @@
+// Everex OTC — MVP simplificado (mesa, inventario, estados de cuenta, bancos).
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  ADMIN
+  TESORERIA
+  OPERACIONES
+  CONCILIACION
+  LECTURA
+}
+
+enum PurchaseCounterparty {
+  OPERATOR
+  CLIENT
+  PROVIDER_MX
+}
+
+enum OtcSide {
+  /// Cliente compra USDT (Everex vende USDT).
+  CLIENT_BUYS_USDT
+  /// Cliente vende USDT (Everex compra USDT).
+  CLIENT_SELLS_USDT
+}
+
+/// Liquidación cuando el cliente pagó en MXN y el pipe trae USDT: Everex paga al cliente en GTQ o en USDT.
+enum MxnLiquidationType {
+  GTQ
+  USDT
+}
+
+enum FiatCurrency {
+  GTQ
+  MXN
+  USD
+  /// Reparto / movimiento en stablecoin (p. ej. pago operador en USDT).
+  USDT
+}
+
+enum DistributionDestination {
+  OPERATOR
+  EVEREX_BANK
+  CASH
+}
+
+enum StmtEntityKind {
+  OPERATOR
+  CLIENT
+  PROVIDER_MX
+}
+
+enum StmtEntryKind {
+  USDT_PURCHASE
+  OTC_ALLOCATION
+  MANUAL_ADJUST
+  /// Reparto venta OTC: GTQ del cliente aplicados al operador (reduce saldo operador).
+  PAGO_CLIENTE
+  /// Reparto OTC: pago/compensación al operador en USDT (no afecta saldo GTQ del operador).
+  PAGO_OPERADOR_USDT
+  /// Operador aporta MXN; Everex paga USDT desde inventario (sin GTQ ni banco GTQ).
+  OPERATOR_MXN_USDT_PAYOUT
+  /// Everex paga GTQ al operador desde cuenta bancaria (débito banco + salida en libro operador).
+  PAGO_EVEREX_A_OPERADOR
+}
+
+enum BankMovementType {
+  CREDIT
+  DEBIT
+}
+
+enum BankRowStatus {
+  UNMATCHED
+  MATCHED
+  POSSIBLE_MATCH
+  DIFFERENCE
+}
+
+enum ExpenseCategory {
+  PLANILLA
+  PERSONALES
+  IMPUESTOS
+  ALQUILER
+  PROVEEDORES
+  BANCOS
+  OTROS
+}
+
+/// Origen del fondo (banco Everex vs caja).
+enum FundsChannel {
+  BANK
+  CASH
+}
+
+enum StatementLineStatus {
+  UNMATCHED
+  POSSIBLE_MATCH
+  MATCHED
+  DIFFERENCE
+}
+
+enum EverexCreditorType {
+  CLIENT
+  OPERATOR
+  PROVIDER
+  OTHER
+  /// Legado — tratar como OTHER en UI nueva.
+  INVESTOR
+}
+
+/// Cuadradora / ajustes manuales temporales (no modifican operaciones OTC).
+enum CuadradoraAdjustmentKind {
+  BANCO
+  WALLET_USDT
+  UTILIDAD
+  OPERADOR
+  CLIENTE_PENDIENTE
+}
+
+enum CuadradoraAdjustmentDirection {
+  AUMENTAR
+  DISMINUIR
+}
+
+enum CuadradoraAdjustmentStatus {
+  ACTIVE
+  REVERSED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         UserRole
+  displayName  String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  usdtPurchasesCreated UsdtPurchase[]   @relation("PurchaseCreatedBy")
+  otcOpsCreated        OtcOperation[]   @relation("OtcCreatedBy")
+  stmtCreated          StatementEntry[] @relation("StmtCreatedBy")
+  bankMovementsCreated BankMovement[]   @relation("BankMovCreatedBy")
+  expensesCreated              Expense[]              @relation("ExpenseCreatedBy")
+  clientReceivablesCreated     ClientReceivable[]     @relation("RecvCreatedBy")
+  clientRecvPaymentsCreated    ClientReceivablePayment[] @relation("RecvPayCreatedBy")
+  everexPayablesCreated        EverexPayable[]        @relation("PayableCreatedBy")
+  everexPayablePaymentsCreated EverexPayablePayment[] @relation("PayablePayCreatedBy")
+  bankImportBatchesCreated     BankImportBatch[]      @relation("ImportBatchCreatedBy")
+  usdtPurchaseEditLogs         UsdtPurchaseEditLog[]  @relation("UsdtPurchaseEditLogs")
+  bankOpeningBalancesCreated   BankOpeningBalance[]   @relation("OpeningBalanceCreatedBy")
+  bankOpeningBalancesUpdated   BankOpeningBalance[]   @relation("OpeningBalanceUpdatedBy")
+  bankOpeningBalanceAudits     BankOpeningBalanceAudit[] @relation("OpeningBalanceAudits")
+  otcMxnSpreadsCreated         OtcMxnSpread[]         @relation("MxnSpreadCreatedBy")
+  operatorMxnUsdtSettlementsCreated OperatorMxnUsdtSettlement[] @relation("OpMxnUsdtCreatedBy")
+  cuadradoraAdjustmentsCreated CuadradoraAdjustment[] @relation("CuadradoraCreatedBy")
+  appAuditLogs                AppAuditLog[]          @relation("AppAuditLogs")
+}
+
+/// Auditoría de acciones sensibles (edición/eliminación OTC, compras USDT, etc.).
+model AppAuditLog {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  userId        String
+  user          User     @relation("AppAuditLogs", fields: [userId], references: [id])
+  action        String
+  entityType    String
+  entityId      String
+  payloadBefore Json?
+  payloadAfter  Json?
+  reason        String?
+
+  @@index([entityType, entityId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model Operator {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  statementEntries StatementEntry[] @relation("StmtOperator")
+  purchases        UsdtPurchase[]
+  allocations      OtcAllocation[]  @relation("AllocOperator")
+  everexPayables   EverexPayable[]
+  operatorMxnUsdtSettlements OperatorMxnUsdtSettlement[]
+  cuadradoraAdjustments CuadradoraAdjustment[]
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  operations  OtcOperation[]
+  mxnSpreads  OtcMxnSpread[]
+  stmt        StatementEntry[] @relation("StmtClient")
+  purchases   UsdtPurchase[]
+  receivables ClientReceivable[]
+  everexPayables EverexPayable[]
+}
+
+model MexicoProvider {
+  id        String   @id @default(cuid())
+  name      String
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchases UsdtPurchase[]
+  mxnSpreads OtcMxnSpread[]
+  stmt      StatementEntry[] @relation("StmtProvider")
+  operatorMxnUsdtSettlements OperatorMxnUsdtSettlement[]
+  everexPayables EverexPayable[]
+}
+
+model BankAccount {
+  id        String       @id @default(cuid())
+  label     String
+  currency  FiatCurrency @default(GTQ)
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  movements         BankMovement[]
+  allocations       OtcAllocation[]      @relation("AllocBank")
+  expenses          Expense[]
+  statementLines    BankStatementLine[]
+  importBatches     BankImportBatch[]
+  recvPayments      ClientReceivablePayment[]
+  payablePaymentsOut EverexPayablePayment[]
+  openingBalance    BankOpeningBalance?
+  cuadradoraAdjustments CuadradoraAdjustment[]
+
+  /// Saldo según banco / extracto (opcional), para comparar con saldo sistema.
+  reportedBalance   Decimal?
+  reportedBalanceAt DateTime?
+}
+
+/// Compra de USDT — aumenta inventario y registra movimiento en estado de cuenta del contraparte.
+model UsdtPurchase {
+  id           String              @id @default(cuid())
+  counterparty PurchaseCounterparty
+  operatorId   String?
+  operator     Operator?           @relation(fields: [operatorId], references: [id])
+  clientId     String?
+  client       Client?             @relation(fields: [clientId], references: [id])
+  providerId   String?
+  provider     MexicoProvider?     @relation(fields: [providerId], references: [id])
+
+  amountMxn    Decimal?
+  gtqTotal     Decimal
+  usdtAmount   Decimal
+  rateXe       Decimal?
+  rateMxnToGtq Decimal?
+  notes        String?
+
+  dayKey      String
+  createdAt   DateTime @default(now())
+  createdByUserId String
+  createdBy   User     @relation("PurchaseCreatedBy", fields: [createdByUserId], references: [id])
+  editLogs    UsdtPurchaseEditLog[]
+
+  @@index([dayKey])
+  @@index([counterparty])
+  @@index([providerId])
+}
+
+/// Auditoría simple de ediciones a compras USDT (campo anterior / nuevo).
+model UsdtPurchaseEditLog {
+  id         String       @id @default(cuid())
+  purchaseId String
+  purchase   UsdtPurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User         @relation("UsdtPurchaseEditLogs", fields: [userId], references: [id])
+  createdAt  DateTime     @default(now())
+  field      String
+  oldValue   String?
+  newValue   String?
+
+  @@index([purchaseId, createdAt])
+}
+
+/// Saldo inicial por cuenta (un registro por banco). Base para saldo sistema desde fecha de corte.
+model BankOpeningBalance {
+  id              String      @id @default(cuid())
+  bankAccountId   String      @unique
+  bankAccount     BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  amount          Decimal
+  effectiveAt     DateTime
+  note            String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  createdByUserId String
+  createdBy       User        @relation("OpeningBalanceCreatedBy", fields: [createdByUserId], references: [id])
+  updatedByUserId String?
+  updatedBy       User?       @relation("OpeningBalanceUpdatedBy", fields: [updatedByUserId], references: [id])
+  audits          BankOpeningBalanceAudit[]
+
+  @@index([effectiveAt])
+}
+
+model BankOpeningBalanceAudit {
+  id        String             @id @default(cuid())
+  openingId String
+  opening   BankOpeningBalance @relation(fields: [openingId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User               @relation("OpeningBalanceAudits", fields: [userId], references: [id])
+  createdAt DateTime           @default(now())
+  field     String
+  oldValue  String?
+  newValue  String?
+
+  @@index([openingId])
+}
+
+model OtcOperation {
+  id     String @id @default(cuid())
+  ref    String @unique @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+  side     OtcSide
+
+  usdtAmount      Decimal
+  rateFiatPerUsdt Decimal
+  totalFiat       Decimal
+  fiatCurrency    FiatCurrency
+  /// Base GTQ para utilidad (ingreso neto cliente en GTQ o equivalente ingresado).
+  pnlBasisGtq     Decimal
+
+  profitGtq Decimal?
+  profitUsd Decimal?
+  /// Utilidad en USDT cuando mxnLiquidation = USDT (pipe − entregado al cliente).
+  profitUsdt Decimal?
+
+  /// Solo operaciones cliente compra + MXN: cómo se liquidó al cliente.
+  mxnLiquidation MxnLiquidationType?
+  /// USDT que entra por el pipe (MXN ÷ tasa), fijado al guardar.
+  usdtPipelineReceived Decimal?
+  /// Si liquidación GTQ: GTQ pagados al cliente (referencia operativa; banco puede registrarse aparte).
+  gtqPaidToClient Decimal?
+
+  notes     String?
+  dayKey    String
+  createdAt DateTime @default(now())
+  createdByUserId String
+  createdBy       User @relation("OtcCreatedBy", fields: [createdByUserId], references: [id])
+
+  allocations OtcAllocation[]
+
+  @@index([clientId])
+  @@index([dayKey])
+  @@index([side])
+}
+
+/// OTC MXN spread: cliente paga MXN, proveedor MX entrega USDT a una tasa, Everex entrega USDT al cliente a otra tasa; utilidad en USDT.
+model OtcMxnSpread {
+  id     String @id @default(cuid())
+  ref    String @unique @default(cuid())
+  clientId   String
+  client     Client @relation(fields: [clientId], references: [id])
+  providerId String
+  provider   MexicoProvider @relation(fields: [providerId], references: [id])
+
+  mxnReceived Decimal
+  /// MXN por USDT (proveedor / XE).
+  xeProvider  Decimal
+  /// MXN por USDT (tasa al cliente).
+  clientRate  Decimal
+
+  usdtFromProvider Decimal
+  usdtToClient     Decimal
+  profitUsdt       Decimal
+
+  notes     String?
+  dayKey    String
+  createdAt DateTime @default(now())
+  createdByUserId String
+  createdBy       User @relation("MxnSpreadCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([clientId])
+  @@index([providerId])
+  @@index([dayKey])
+}
+
+/// Operador entrega MXN; Everex paga USDT (desde inventario). Sin GTQ ni bancos GTQ.
+model OperatorMxnUsdtSettlement {
+  id       String   @id @default(cuid())
+  ref      String   @unique @default(cuid())
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id])
+  providerId String?
+  provider   MexicoProvider? @relation(fields: [providerId], references: [id])
+
+  mxnReceived   Decimal
+  xeReference   Decimal
+  usdtPaid      Decimal
+  gtqRateOptional Decimal?
+
+  referenceUsdt Decimal
+  diffUsdt      Decimal
+
+  notes     String?
+  dayKey    String
+  createdAt DateTime @default(now())
+  createdByUserId String
+  createdBy User @relation("OpMxnUsdtCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([operatorId, dayKey])
+  @@index([dayKey])
+}
+
+model OtcAllocation {
+  id          String                @id @default(cuid())
+  operationId String
+  operation   OtcOperation          @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  destination DistributionDestination
+  operatorId  String?
+  operator    Operator?             @relation("AllocOperator", fields: [operatorId], references: [id])
+  bankAccountId String?
+  bankAccount   BankAccount?        @relation("AllocBank", fields: [bankAccountId], references: [id])
+
+  amount    Decimal
+  /// Moneda del monto (GTQ en banco/cash; USDT en pago operador en USDT).
+  currency  FiatCurrency @default(GTQ)
+  reference String?
+  notes     String?
+
+  createdAt DateTime @default(now())
+
+  /// Movimiento bancario vinculado (1:1) cuando destino = banco Everex.
+  ledgerBankMovement BankMovement?
+
+  @@index([operationId])
+}
+
+model StatementEntry {
+  id         String         @id @default(cuid())
+  entityKind StmtEntityKind
+  operatorId String?
+  operator   Operator?      @relation("StmtOperator", fields: [operatorId], references: [id])
+  clientId   String?
+  client     Client?        @relation("StmtClient", fields: [clientId], references: [id])
+  providerId String?
+  provider   MexicoProvider? @relation("StmtProvider", fields: [providerId], references: [id])
+
+  amountGtq Decimal
+  kind      StmtEntryKind
+  label     String
+  refType   String?
+  refId     String?
+
+  dayKey    String
+  postedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+  createdByUserId String
+  createdBy       User @relation("StmtCreatedBy", fields: [createdByUserId], references: [id])
+  cuadradoraAdjustment CuadradoraAdjustment? @relation("CuadradoraStatementEntry")
+
+  @@index([entityKind, operatorId, postedAt])
+  @@index([entityKind, clientId, postedAt])
+  @@index([entityKind, providerId, postedAt])
+  @@index([dayKey])
+  @@index([refType, refId])
+}
+
+model BankMovement {
+  id            String       @id @default(cuid())
+  bankAccountId String
+  bankAccount   BankAccount  @relation(fields: [bankAccountId], references: [id])
+  date          DateTime
+  description   String
+  amount        Decimal
+  type          BankMovementType
+  currency      FiatCurrency @default(GTQ)
+  reference     String?
+  status        BankRowStatus @default(UNMATCHED)
+  matchedNote   String?
+
+  sourceOtcId String?
+  /// Idempotencia: un movimiento por línea de reparto OTC a banco.
+  sourceOtcAllocationId String? @unique
+  sourceOtcAllocation   OtcAllocation? @relation(fields: [sourceOtcAllocationId], references: [id], onDelete: SetNull)
+
+  expense              Expense?
+  receivablePayment    ClientReceivablePayment?
+  payablePayment       EverexPayablePayment?
+  matchedByStatementLine BankStatementLine? @relation("StmtLineMatchedMovement")
+  cuadradoraAdjustment CuadradoraAdjustment? @relation("CuadradoraBankMovement")
+
+  createdAt       DateTime @default(now())
+  createdByUserId String
+  createdBy       User     @relation("BankMovCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([bankAccountId, date])
+  @@index([status])
+}
+
+model Expense {
+  id              String          @id @default(cuid())
+  date            DateTime
+  category        ExpenseCategory
+  amount          Decimal
+  currency        FiatCurrency
+  channel         FundsChannel
+  bankAccountId   String?
+  bankAccount     BankAccount?    @relation(fields: [bankAccountId], references: [id])
+  description     String
+  proofImage      String?
+  dayKey          String
+  bankMovementId  String?         @unique
+  bankMovement    BankMovement?     @relation(fields: [bankMovementId], references: [id])
+  createdByUserId String
+  createdBy       User              @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+  createdAt       DateTime        @default(now())
+
+  @@index([dayKey])
+  @@index([category])
+}
+
+model ClientReceivable {
+  id              String   @id @default(cuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id])
+  originalAmount  Decimal
+  balance         Decimal
+  currency        FiatCurrency
+  reason          String
+  notes           String?
+  openedAt        DateTime @default(now())
+  dayKey          String
+  active          Boolean  @default(true)
+  createdByUserId String
+  createdBy       User     @relation("RecvCreatedBy", fields: [createdByUserId], references: [id])
+  payments        ClientReceivablePayment[]
+  cuadradoraAdjustments CuadradoraAdjustment[]
+
+  @@index([clientId, active])
+  @@index([dayKey])
+}
+
+model ClientReceivablePayment {
+  id              String   @id @default(cuid())
+  receivableId    String
+  receivable      ClientReceivable @relation(fields: [receivableId], references: [id], onDelete: Cascade)
+  amount          Decimal
+  currency        FiatCurrency
+  paymentDate     DateTime
+  channel         FundsChannel
+  bankAccountId   String?
+  bankAccount     BankAccount? @relation(fields: [bankAccountId], references: [id])
+  reference       String?
+  proofImage      String?
+  dayKey          String
+  bankMovementId  String?  @unique
+  bankMovement    BankMovement? @relation(fields: [bankMovementId], references: [id])
+  createdByUserId String
+  createdBy       User     @relation("RecvPayCreatedBy", fields: [createdByUserId], references: [id])
+  createdAt       DateTime @default(now())
+
+  @@index([receivableId])
+  @@index([dayKey])
+}
+
+model EverexPayable {
+  id              String            @id @default(cuid())
+  creditorName    String
+  displayName     String            @default("")
+  creditorType    EverexCreditorType
+  clientId        String?
+  client          Client?           @relation(fields: [clientId], references: [id])
+  operatorId      String?
+  operator        Operator?         @relation(fields: [operatorId], references: [id])
+  providerId      String?
+  provider        MexicoProvider?   @relation(fields: [providerId], references: [id])
+  otherName       String?
+  originalAmount  Decimal
+  balance         Decimal
+  currency        FiatCurrency
+  reason          String
+  notes           String?
+  openedAt        DateTime          @default(now())
+  dayKey          String
+  active          Boolean           @default(true)
+  createdByUserId String
+  createdBy       User              @relation("PayableCreatedBy", fields: [createdByUserId], references: [id])
+  payments        EverexPayablePayment[]
+
+  @@index([active])
+  @@index([dayKey])
+  @@index([clientId])
+  @@index([providerId])
+}
+
+model EverexPayablePayment {
+  id              String   @id @default(cuid())
+  payableId       String
+  payable         EverexPayable @relation(fields: [payableId], references: [id], onDelete: Cascade)
+  amount          Decimal
+  currency        FiatCurrency
+  paymentDate     DateTime
+  channel         FundsChannel
+  bankAccountId   String?
+  bankAccount     BankAccount? @relation(fields: [bankAccountId], references: [id])
+  reference       String?
+  proofImage      String?
+  dayKey          String
+  bankMovementId  String?  @unique
+  bankMovement    BankMovement? @relation(fields: [bankMovementId], references: [id])
+  createdByUserId String
+  createdBy       User     @relation("PayablePayCreatedBy", fields: [createdByUserId], references: [id])
+  createdAt       DateTime @default(now())
+
+  @@index([payableId])
+  @@index([dayKey])
+}
+
+model BankImportBatch {
+  id              String   @id @default(cuid())
+  bankAccountId   String
+  bankAccount     BankAccount @relation(fields: [bankAccountId], references: [id])
+  label           String
+  createdAt       DateTime @default(now())
+  createdByUserId String
+  createdBy       User     @relation("ImportBatchCreatedBy", fields: [createdByUserId], references: [id])
+  lines           BankStatementLine[]
+
+  @@index([bankAccountId])
+}
+
+model BankStatementLine {
+  id                     String               @id @default(cuid())
+  bankAccountId          String
+  bankAccount            BankAccount          @relation(fields: [bankAccountId], references: [id])
+  batchId                String?
+  batch                  BankImportBatch?     @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  rowDate                DateTime
+  description            String
+  reference              String?
+  credit                 Decimal?
+  debit                  Decimal?
+  balanceAfter           Decimal?
+  status                 StatementLineStatus  @default(UNMATCHED)
+  suggestedMovementId    String?
+  matchedBankMovementId  String?              @unique
+  matchedBankMovement    BankMovement?        @relation("StmtLineMatchedMovement", fields: [matchedBankMovementId], references: [id])
+  createdAt              DateTime             @default(now())
+
+  @@index([bankAccountId, rowDate])
+  @@index([status])
+}
+
+model CuadradoraAdjustment {
+  id        String   @id @default(cuid())
+  kind      CuadradoraAdjustmentKind
+  direction CuadradoraAdjustmentDirection
+  amount    Decimal
+  currency  FiatCurrency
+  /// Fecha/hora contable del ajuste (equivalente a “posted” en libro).
+  postedAt DateTime
+  dayKey    String
+  reason    String
+  note      String?
+  status    CuadradoraAdjustmentStatus @default(ACTIVE)
+
+  createdAt       DateTime @default(now())
+  createdByUserId String
+  createdBy       User     @relation("CuadradoraCreatedBy", fields: [createdByUserId], references: [id])
+
+  bankAccountId String?
+  bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id])
+  operatorId    String?
+  operator      Operator? @relation(fields: [operatorId], references: [id])
+  receivableId  String?
+  receivable    ClientReceivable? @relation(fields: [receivableId], references: [id])
+
+  reversesId   String?
+  reversedById String? @unique
+
+  bankMovementId   String? @unique
+  bankMovement     BankMovement?   @relation("CuadradoraBankMovement", fields: [bankMovementId], references: [id])
+  statementEntryId String? @unique
+  statementEntry   StatementEntry? @relation("CuadradoraStatementEntry", fields: [statementEntryId], references: [id])
+
+  /// Efecto inventario USDT (solo kind WALLET_USDT): positivo aumenta, negativo disminuye.
+  walletUsdtSigned Decimal?
+
+  @@index([dayKey])
+  @@index([kind, status])
+  @@index([createdAt])
+}
