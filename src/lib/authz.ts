@@ -66,6 +66,16 @@ export function canViewEstadoFinanciero(user: User | null): boolean {
   return isAdmin(user);
 }
 
+/** Estado de cuenta wallet USDT (inventario tesorería). */
+export function canViewWallet(user: User | null): boolean {
+  if (!user || user.role === UserRole.LECTURA) return false;
+  return (
+    user.role === UserRole.ADMIN ||
+    user.role === UserRole.TESORERIA ||
+    user.role === UserRole.CONCILIACION
+  );
+}
+
 /**
  * Utilidad, márgenes, costo promedio de inventario y reportes equivalentes — solo administración.
  * (Operaciones / conciliación / tesorería no ven métricas de ganancia en UI ni deben recibirlas en página.)

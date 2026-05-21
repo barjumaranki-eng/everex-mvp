@@ -9,6 +9,7 @@ import { MoneyInput } from "@/app/components/MoneyInput";
 import { formatMoneyAmountCoreDisplay, normalizeMoneyBackend } from "@/lib/format-money";
 import { parseRateToDecimal } from "@/lib/format-rate";
 import { OtcAllocationLineFields, type OtcAllocLineMeta, type OtcAllocOpt } from "./OtcAllocationLineFields";
+import { OtcEjecutadoRealFields } from "./OtcEjecutadoRealFields";
 
 type Props = {
   clients: OtcAllocOpt[];
@@ -226,6 +227,8 @@ export function NuevaOperacionForm({ clients, operators, bankAccounts, presetSid
           </p>
         </div>
       ) : null}
+
+      <OtcEjecutadoRealFields side={presetSide} />
 
       {isBuy ? (
         <fieldset className="space-y-2 rounded border border-amber-200 bg-amber-50/40 p-3">

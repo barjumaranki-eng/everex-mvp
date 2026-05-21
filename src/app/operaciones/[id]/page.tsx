@@ -12,13 +12,14 @@ import {
   CLIENT_OTC_ADVANCE_REASON_SUBSTR,
   clientAdvancePayableNotesMarker,
 } from "@/lib/everex-payable-client-advance";
+import { getClientBalance } from "@/lib/client-balance";
 
 export default async function OperacionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) redirect("/login");
   const { id } = await params;
 
-  const [op, operators, bankAccounts] = await Promise.all([
+  const [op, operators, bankAccounts, clientBalance] = await Promise.all([
     prisma.otcOperation.findUnique({
       where: { id },
       include: {
@@ -29,6 +30,9 @@ export default async function OperacionDetailPage({ params }: { params: Promise<
     }),
     prisma.operator.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.bankAccount.findMany({ where: { active: true }, orderBy: { label: "asc" } }),
+    prisma.otcOperation
+      .findUnique({ where: { id }, select: { clientId: true } })
+      .then((row) => (row ? getClientBalance(row.clientId) : null)),
   ]);
   if (!op) notFound();
 
@@ -114,9 +118,48 @@ export default async function OperacionDetailPage({ params }: { params: Promise<
           <dd className="tabular-nums">{formatRateDisplay(op.rateFiatPerUsdt)}</dd>
         </div>
         <div className="flex justify-between gap-4">
-          <dt className="text-zinc-600">Total fiat recibido</dt>
+          <dt className="text-zinc-600">Total fiat pactado</dt>
           <dd className="tabular-nums">{formatMoneyDisplay(op.totalFiat, op.fiatCurrency)}</dd>
         </div>
+        {op.fiatRecibidoReal != null ? (
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-600">
+              {op.side === OtcSide.CLIENT_BUYS_USDT ? "GTQ recibido real" : "GTQ pagado real"}
+            </dt>
+            <dd className="tabular-nums">{formatMoneyDisplay(op.fiatRecibidoReal, op.fiatCurrency)}</dd>
+          </div>
+        ) : null}
+        {op.usdtEntregadoReal != null ? (
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-600">
+              {op.side === OtcSide.CLIENT_BUYS_USDT ? "USDT entregado real" : "USDT recibido real"}
+            </dt>
+            <dd className="tabular-nums">{formatMoneyDisplay(op.usdtEntregadoReal, "USDT")}</dd>
+          </div>
+        ) : null}
+        {clientBalance &&
+        (Number(clientBalance.saldoGTQ.toString()) !== 0 || Number(clientBalance.saldoUSDT.toString()) !== 0) ? (
+          <div className="rounded border border-sky-200 bg-sky-50/80 p-3 text-xs text-sky-950 sm:col-span-2">
+            <p className="font-medium">Estado de cuenta del cliente (acumulado)</p>
+            <p className="mt-1 tabular-nums">
+              GTQ: {formatMoneyDisplay(clientBalance.saldoGTQ, FiatCurrency.GTQ)}{" "}
+              <span className="text-sky-800/90">
+                ({Number(clientBalance.saldoGTQ.toString()) > 0 ? "nos debe" : Number(clientBalance.saldoGTQ.toString()) < 0 ? "le debemos" : "—"})
+              </span>
+            </p>
+            <p className="mt-1 tabular-nums">
+              USDT: {formatMoneyDisplay(clientBalance.saldoUSDT, "USDT")}{" "}
+              <span className="text-sky-800/90">
+                ({Number(clientBalance.saldoUSDT.toString()) > 0 ? "nos debe" : Number(clientBalance.saldoUSDT.toString()) < 0 ? "le debemos" : "—"})
+              </span>
+            </p>
+            <p className="mt-2">
+              <Link href={`/clientes/${op.clientId}`} className="underline">
+                Ver ficha cliente
+              </Link>
+            </p>
+          </div>
+        ) : null}
         {op.side === OtcSide.CLIENT_BUYS_USDT ? (
           <div className="flex justify-between gap-4">
             <dt className="text-zinc-600">GTQ aplicado a venta hoy</dt>

@@ -51,6 +51,8 @@ const EMPTY_INVENTORY_DIAGNOSTICS: InventoryDiagnostics = {
   providerPurchaseRows: 0,
   purchaseSumUsdt: 0,
   purchaseSumGtq: 0,
+  clientSellsUsdtSubtotal: 0,
+  clientSellsGtqSubtotal: 0,
   ventasUsdtSubtotal: 0,
   operatorMxnUsdtPaidSubtotal: 0,
   inventarioFinalUsdt: 0,
@@ -92,6 +94,8 @@ type DashboardLoaded = {
     providerPurchaseRows: number;
     sumUsdt: number;
     sumGtq: number;
+    clientSellsUsdtSubtotal: number;
+    clientSellsGtqSubtotal: number;
     ventasUsdtSubtotal: number;
     operatorMxnUsdtPaidSubtotal: number;
     inventarioFinalUsdt: number;
@@ -269,6 +273,8 @@ async function loadDashboardData(user: User): Promise<DashboardLoaded> {
         providerPurchaseRows: inv.diagnostics.providerPurchaseRows,
         sumUsdt: inv.diagnostics.purchaseSumUsdt,
         sumGtq: inv.diagnostics.purchaseSumGtq,
+        clientSellsUsdtSubtotal: inv.diagnostics.clientSellsUsdtSubtotal,
+        clientSellsGtqSubtotal: inv.diagnostics.clientSellsGtqSubtotal,
         ventasUsdtSubtotal: inv.diagnostics.ventasUsdtSubtotal,
         operatorMxnUsdtPaidSubtotal: inv.diagnostics.operatorMxnUsdtPaidSubtotal,
         inventarioFinalUsdt: inv.diagnostics.inventarioFinalUsdt,
@@ -517,8 +523,10 @@ export default async function DashboardPage() {
             <p className="mt-2 text-2xl font-semibold tabular-nums">{formatMoneyDisplay(inv.usdt, "USDT")}</p>
             <p className="text-sm text-zinc-600">Costo prom. {formatRateDisplay(inv.avgGtqPerUsdt)} GTQ/USDT</p>
             <p className="mt-2 text-xs text-zinc-500">
-              Inventario global = SUM(<code className="text-zinc-600">UsdtPurchase.usdtAmount</code>, OPERATOR + PROVIDER_MX) −
-              ventas OTC cliente compra − pagos USDT MXN→USDT. Las compras <strong>OPERATOR</strong> también mueven el
+              Inventario global = SUM(<code className="text-zinc-600">UsdtPurchase.usdtAmount</code>, OPERATOR + PROVIDER_MX) +
+              OTC <code className="text-zinc-600">CLIENT_SELLS_USDT</code> − ventas OTC cliente compra − pagos USDT MXN→USDT.
+              Costo prom. incluye GTQ de compras y <code className="text-zinc-600">totalFiat</code> pagado al cliente en ventas USDT.
+              Las compras <strong>OPERATOR</strong> también mueven el
               saldo GTQ/USDT del operador (abajo). Las compras <strong>PROVIDER_MX</strong> solo acumulan al proveedor MX
               e inventario; <strong>no</strong> suman a operadores.
             </p>
@@ -530,6 +538,14 @@ export default async function DashboardPage() {
                 <div>Filas OPERATOR: {purchaseInventoryDebug.operatorPurchaseRows}</div>
                 <div>purchaseUsdtTotal (SUM en BD): {purchaseInventoryDebug.sumUsdt.toFixed(4)}</div>
                 <div>purchaseGtqTotal (SUM en BD): {purchaseInventoryDebug.sumGtq.toFixed(2)}</div>
+                <div>
+                  Cliente vende USDT sumado (OTC CLIENT_SELLS, USDT):{" "}
+                  {purchaseInventoryDebug.clientSellsUsdtSubtotal.toFixed(4)}
+                </div>
+                <div>
+                  GTQ pagados al cliente (CLIENT_SELLS, totalFiat):{" "}
+                  {purchaseInventoryDebug.clientSellsGtqSubtotal.toFixed(2)}
+                </div>
                 <div>Ventas USDT restadas (OTC CLIENT_BUYS, histórico): {purchaseInventoryDebug.ventasUsdtSubtotal.toFixed(4)}</div>
                 <div>Pagos USDT operador restados (MXN→USDT, histórico): {purchaseInventoryDebug.operatorMxnUsdtPaidSubtotal.toFixed(4)}</div>
                 <div className="font-medium text-zinc-900">

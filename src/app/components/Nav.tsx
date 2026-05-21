@@ -13,6 +13,7 @@ import {
   canViewTreasurySensitiveModules,
   canRunOperations,
   canViewEstadoFinanciero,
+  canViewWallet,
   usesOperationalDashboard,
 } from "@/lib/authz";
 
@@ -144,6 +145,12 @@ export async function Nav() {
         {concilia ? (
           <Link className="text-blue-700 underline" href="/conciliacion-bancaria">
             Conciliación
+          </Link>
+        ) : null}
+
+        {canViewWallet(user) ? (
+          <Link className="text-blue-700 underline" href="/wallet">
+            Wallet USDT
           </Link>
         ) : null}
 

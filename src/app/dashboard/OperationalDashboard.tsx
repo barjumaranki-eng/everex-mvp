@@ -54,8 +54,8 @@ export function OperationalDashboard({ data, operatorBalances, hideTreasuryModul
             {formatMoneyDisplay(inventoryUsdt, "USDT")}
           </p>
           <p className="mt-1 text-xs text-emerald-900/90">
-            Costo prom. {formatRateDisplay(inventoryAvgGtqPerUsdt)} GTQ/USDT · incluye todas las compras USDT y ventas
-            OTC registradas.
+            Costo prom. {formatRateDisplay(inventoryAvgGtqPerUsdt)} GTQ/USDT · compras USDT, OTC cliente vende USDT
+            (entra inventario + GTQ pagado) y salidas por ventas al cliente.
           </p>
           <p className="mt-2 text-xs">
             <Link href="/compras-usdt" className="font-medium text-emerald-900 underline">

@@ -54,6 +54,8 @@ export default async function EditOperacionPage({ params }: { params: Promise<{ 
         initialTotalFiatBackend={initialTotal}
         initialNotes={op.notes ?? ""}
         defaultOperativeIso={op.createdAt.toISOString()}
+        initialFiatRecibidoRealBackend={op.fiatRecibidoReal?.toString() ?? ""}
+        initialUsdtEntregadoRealBackend={op.usdtEntregadoReal?.toString() ?? ""}
         initialAllocations={op.allocations.map((a) => ({
           destination: a.destination,
           operatorId: a.operatorId,

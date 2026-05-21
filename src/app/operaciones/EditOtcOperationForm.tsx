@@ -14,6 +14,7 @@ import {
   type OtcAllocLineMeta,
   type OtcAllocOpt,
 } from "./OtcAllocationLineFields";
+import { OtcEjecutadoRealFields } from "./OtcEjecutadoRealFields";
 
 function defaultLineMeta(): OtcAllocLineMeta {
   return { dest: "", operatorPayout: "GTQ" };
@@ -52,6 +53,8 @@ type Props = {
   initialTotalFiatBackend: string;
   initialNotes: string;
   defaultOperativeIso: string;
+  initialFiatRecibidoRealBackend: string;
+  initialUsdtEntregadoRealBackend: string;
   initialAllocations: AllocRow[];
 };
 
@@ -67,6 +70,8 @@ export function EditOtcOperationForm({
   initialTotalFiatBackend,
   initialNotes,
   defaultOperativeIso,
+  initialFiatRecibidoRealBackend,
+  initialUsdtEntregadoRealBackend,
   initialAllocations,
 }: Props) {
   const [state, formAction, pending] = useActionState(updateOtcOperation, null);
@@ -320,6 +325,12 @@ export function EditOtcOperationForm({
           </p>
         </div>
       ) : null}
+
+      <OtcEjecutadoRealFields
+        side={side}
+        defaultFiatRecibidoReal={initialFiatRecibidoRealBackend}
+        defaultUsdtEntregadoReal={initialUsdtEntregadoRealBackend}
+      />
 
       {isBuy ? (
         <fieldset className="space-y-2 rounded border border-amber-200 bg-amber-50/40 p-3">

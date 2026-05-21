@@ -30,6 +30,18 @@ enum OtcSide {
   CLIENT_SELLS_USDT
 }
 
+enum WalletMovimientoTipo {
+  ENTRADA
+  SALIDA
+}
+
+enum WalletMovimientoOrigen {
+  COMPRA_PROVEEDOR
+  CLIENTE_VENDE
+  VENTA_CLIENTE
+  PAGO_OPERADOR
+}
+
 /// Liquidación cuando el cliente pagó en MXN y el pipe trae USDT: Everex paga al cliente en GTQ o en USDT.
 enum MxnLiquidationType {
   GTQ
@@ -210,6 +222,18 @@ model Client {
   purchases   UsdtPurchase[]
   receivables ClientReceivable[]
   everexPayables EverexPayable[]
+  balance     ClientBalance?
+}
+
+/// Estado de cuenta vivo por cliente (saldos arrastrados por operaciones descuadradas).
+model ClientBalance {
+  clientId  String  @id
+  client    Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// Positivo: el cliente nos debe GTQ. Negativo: le debemos GTQ.
+  saldoGTQ  Decimal @default(0)
+  /// Positivo: el cliente nos debe USDT. Negativo: le debemos USDT.
+  saldoUSDT Decimal @default(0)
+  updatedAt DateTime @updatedAt
 }
 
 model MexicoProvider {
@@ -336,8 +360,13 @@ model OtcOperation {
 
   usdtAmount      Decimal
   rateFiatPerUsdt Decimal
+  /// Valor pactado en fiat (GTQ recibido total en compra / GTQ pagado en venta).
   totalFiat       Decimal
   fiatCurrency    FiatCurrency
+  /// GTQ/MXN que entró a bancos o caja (compra) o GTQ/MXN pagado en caja (venta CLIENT_SELLS).
+  fiatRecibidoReal Decimal?
+  /// USDT que salió del inventario (CLIENT_BUYS) o USDT recibido del cliente (CLIENT_SELLS).
+  usdtEntregadoReal Decimal?
   /// Base GTQ para utilidad (ingreso neto cliente en GTQ o equivalente ingresado).
   pnlBasisGtq     Decimal
 
@@ -701,4 +730,22 @@ model CuadradoraAdjustment {
   @@index([dayKey])
   @@index([kind, status])
   @@index([createdAt])
+}
+
+/// Libro mayor USDT (inventario tesorería): cada entrada/salida de billetera.
+model WalletMovimiento {
+  id           String                 @id @default(cuid())
+  tipo         WalletMovimientoTipo
+  origen       WalletMovimientoOrigen
+  usdtMonto    Decimal
+  referenciaId String
+  /// Etiqueta para estado de cuenta (ej. "Compra proveedor MX · Acme").
+  etiqueta     String?
+  dayKey       String
+  createdAt    DateTime               @default(now())
+
+  @@index([referenciaId])
+  @@index([dayKey])
+  @@index([createdAt])
+  @@index([origen])
 }

@@ -33,6 +33,10 @@ export type InventoryDiagnostics = {
   providerPurchaseRows: number;
   purchaseSumUsdt: number;
   purchaseSumGtq: number;
+  /** USDT que entran por OTC cliente vende USDT (Everex compra). */
+  clientSellsUsdtSubtotal: number;
+  /** GTQ pagados al cliente en esas operaciones (`totalFiat`). */
+  clientSellsGtqSubtotal: number;
   ventasUsdtSubtotal: number;
   operatorMxnUsdtPaidSubtotal: number;
   inventarioFinalUsdt: number;
@@ -40,8 +44,8 @@ export type InventoryDiagnostics = {
 };
 
 /**
- * Inventario = SUM(UsdtPurchase usdt, OPERATOR+PROVIDER_MX) − ventas OTC CLIENT_BUY − pagos MXN→USDT.
- * Totales vía `aggregate` en BD (no depende de operatorId ni providerId).
+ * Inventario = compras USDT + OTC CLIENT_SELLS_USDT − ventas CLIENT_BUYS_USDT − pagos MXN→USDT.
+ * Costo prom. GTQ/USDT = (GTQ compras + GTQ pagados en CLIENT_SELLS) / (USDT compras + USDT CLIENT_SELLS).
  */
 export async function computeInventoryFromDb(): Promise<{
   usdt: number;
@@ -51,7 +55,7 @@ export async function computeInventoryFromDb(): Promise<{
 }> {
   const wherePurchases = purchaseWhereForInventory();
 
-  const [purchaseAgg, byCounterparty, ventasAgg, pagosAgg, purchasesRecent] = await Promise.all([
+  const [purchaseAgg, byCounterparty, clientSellsAgg, ventasAgg, pagosAgg, purchasesRecent] = await Promise.all([
     prisma.usdtPurchase.aggregate({
       where: wherePurchases,
       _sum: { usdtAmount: true, gtqTotal: true },
@@ -61,6 +65,10 @@ export async function computeInventoryFromDb(): Promise<{
       by: ["counterparty"],
       where: wherePurchases,
       _count: { _all: true },
+    }),
+    prisma.otcOperation.aggregate({
+      where: { side: OtcSide.CLIENT_SELLS_USDT },
+      _sum: { usdtAmount: true, totalFiat: true },
     }),
     prisma.otcOperation.aggregate({
       where: { side: OtcSide.CLIENT_BUYS_USDT },
@@ -98,11 +106,16 @@ export async function computeInventoryFromDb(): Promise<{
     if (c === PurchaseCounterparty.PROVIDER_MX) providerPurchaseRows = g._count._all;
   }
 
+  const clientSellsUsdtSubtotal = d(clientSellsAgg._sum.usdtAmount);
+  const clientSellsGtqSubtotal = d(clientSellsAgg._sum.totalFiat);
   const ventasUsdtSubtotal = d(ventasAgg._sum.usdtAmount);
   const operatorMxnUsdtPaidSubtotal = d(pagosAgg._sum.usdtPaid);
 
-  const inventarioFinalUsdt = purchaseSumUsdt - ventasUsdtSubtotal - operatorMxnUsdtPaidSubtotal;
-  const avgGtqPerUsdt = purchaseSumUsdt > 0 ? purchaseSumGtq / purchaseSumUsdt : 0;
+  const usdtEntradas = purchaseSumUsdt + clientSellsUsdtSubtotal;
+  const gtqEntradas = purchaseSumGtq + clientSellsGtqSubtotal;
+  const inventarioFinalUsdt =
+    purchaseSumUsdt + clientSellsUsdtSubtotal - ventasUsdtSubtotal - operatorMxnUsdtPaidSubtotal;
+  const avgGtqPerUsdt = usdtEntradas > 0 ? gtqEntradas / usdtEntradas : 0;
   const gtqBasis = inventarioFinalUsdt * avgGtqPerUsdt;
 
   const purchaseRowsRecent: InventoryPurchaseRowDebug[] = purchasesRecent.map((p) => ({
@@ -125,6 +138,8 @@ export async function computeInventoryFromDb(): Promise<{
       providerPurchaseRows,
       purchaseSumUsdt,
       purchaseSumGtq,
+      clientSellsUsdtSubtotal,
+      clientSellsGtqSubtotal,
       ventasUsdtSubtotal,
       operatorMxnUsdtPaidSubtotal,
       inventarioFinalUsdt,

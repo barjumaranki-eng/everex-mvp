@@ -13,6 +13,10 @@ import { canCreateOtcOperation, canDeleteOtcOperation, canRunOperations } from "
 import { dayKeyFromDateLocal, parseOperativeDateTimeFromForm } from "@/lib/operative-datetime";
 import { normalizeMoneyBackend } from "@/lib/format-money";
 import { computeInventoryFromDb } from "@/lib/inventory";
+import {
+  deleteWalletMovimientosByReferenciaInTx,
+  recordOperatorMxnUsdtPayoutWalletInTx,
+} from "@/lib/wallet-ledger";
 import { OPERATOR_MXN_USDT_SETTLEMENT_REF_TYPE } from "@/lib/operator-mxn-usdt-constants";
 import { buildOperatorMxnUsdtPayoutStatementLabel } from "@/lib/operator-mxn-usdt-statement-label";
 import { syncOperatorMxnUsdtSettlementsToOperatorLedger } from "@/lib/operator-ledger";
@@ -105,6 +109,18 @@ export async function createOperatorMxnUsdtSettlement(
         },
       });
       id = row.id;
+
+      await recordOperatorMxnUsdtPayoutWalletInTx(tx, {
+        settlementId: row.id,
+        usdtPaid,
+        operatorName: (
+          await tx.operator.findUnique({ where: { id: operatorId }, select: { name: true } })
+        )?.name ?? "Operador",
+        ref: row.ref,
+        dayKey,
+        createdAt: operativeInstant,
+      });
+
       const ok = await createStatementEntryCompat(
         tx,
         {
@@ -134,6 +150,7 @@ export async function createOperatorMxnUsdtSettlement(
   revalidatePath("/operaciones", "layout");
   revalidatePath("/operaciones", "page");
   revalidatePath("/dashboard", "page");
+  revalidatePath("/wallet", "page");
   revalidatePath("/operadores", "page");
   revalidatePath(`/operadores/${operatorId}`, "page");
   revalidatePath(`/operaciones/operator-mxn-usdt/${id}`, "page");
@@ -211,6 +228,7 @@ export async function deleteOperatorMxnUsdtSettlement(
   try {
     await prisma.$transaction(async (tx) => {
       await deleteStatementEntriesByRefInTx(tx, OPERATOR_MXN_USDT_SETTLEMENT_REF_TYPE, id);
+      await deleteWalletMovimientosByReferenciaInTx(tx, id);
       await tx.operatorMxnUsdtSettlement.delete({ where: { id } });
       await writeAppAuditLogInTx(tx, {
         userId: user!.id,

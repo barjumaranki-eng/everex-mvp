@@ -14,6 +14,10 @@ import { canCreateUsdtPurchase, canDeleteUsdtPurchase, canEditUsdtPurchase } fro
 import { writeAppAuditLogInTx } from "@/lib/app-audit";
 import { normalizeMoneyBackend } from "@/lib/format-money";
 import { dayKeyFromDateLocal, parseOperativeDateTimeFromForm } from "@/lib/operative-datetime";
+import {
+  deleteWalletMovimientosByReferenciaInTx,
+  recordUsdtPurchaseWalletInTx,
+} from "@/lib/wallet-ledger";
 import { createStatementEntryCompat } from "@/lib/statement-entry-create-compat";
 
 function dec(s: string): Prisma.Decimal {
@@ -81,24 +85,48 @@ export async function createUsdtPurchase(
 
   let purchaseId: string;
   try {
-    const p = await prisma.usdtPurchase.create({
-      data: {
-        counterparty,
-        operatorId: persistedOperatorId,
-        clientId: null,
-        providerId: persistedProviderId,
-        amountMxn: amountMxn ?? null,
-        gtqTotal,
+    purchaseId = await prisma.$transaction(async (tx) => {
+      const p = await tx.usdtPurchase.create({
+        data: {
+          counterparty,
+          operatorId: persistedOperatorId,
+          clientId: null,
+          providerId: persistedProviderId,
+          amountMxn: amountMxn ?? null,
+          gtqTotal,
+          usdtAmount,
+          rateXe: rateXe ?? null,
+          rateMxnToGtq: rateMxnToGtq ?? null,
+          notes,
+          dayKey,
+          createdAt: fechaOperativa,
+          createdByUserId: user!.id,
+        },
+      });
+
+      const [opRow, prRow] = await Promise.all([
+        persistedOperatorId
+          ? tx.operator.findUnique({ where: { id: persistedOperatorId }, select: { name: true } })
+          : null,
+        persistedProviderId
+          ? tx.mexicoProvider.findUnique({ where: { id: persistedProviderId }, select: { name: true } })
+          : null,
+      ]);
+      const walletLabel =
+        counterparty === "PROVIDER_MX"
+          ? `Compra proveedor MX · ${prRow?.name ?? "—"}`
+          : `Compra operador · ${opRow?.name ?? "—"}`;
+
+      await recordUsdtPurchaseWalletInTx(tx, {
+        purchaseId: p.id,
         usdtAmount,
-        rateXe: rateXe ?? null,
-        rateMxnToGtq: rateMxnToGtq ?? null,
-        notes,
+        label: walletLabel,
         dayKey,
         createdAt: fechaOperativa,
-        createdByUserId: user!.id,
-      },
+      });
+
+      return p.id;
     });
-    purchaseId = p.id;
   } catch (e) {
     console.error(e);
     return { error: e instanceof Error ? e.message : "No se pudo guardar la compra USDT" };
@@ -148,6 +176,7 @@ export async function createUsdtPurchase(
 
   revalidatePath("/compras-usdt");
   revalidatePath("/dashboard");
+  revalidatePath("/wallet");
   revalidatePath("/estado-financiero");
   revalidatePath("/proveedores");
   revalidatePath("/proveedor-mx");
@@ -321,6 +350,8 @@ export async function updateUsdtPurchase(
 
   try {
     await prisma.$transaction(async (tx) => {
+      await deleteWalletMovimientosByReferenciaInTx(tx, id);
+
       await tx.statementEntry.deleteMany({
         where: {
           refType: "UsdtPurchase",
@@ -392,7 +423,23 @@ export async function updateUsdtPurchase(
         await appendPurchaseAudit(tx, id, user!.id, "recalcFromRates", "off", "on");
       }
 
-      const updated = await tx.usdtPurchase.findUniqueOrThrow({ where: { id } });
+      const updated = await tx.usdtPurchase.findUniqueOrThrow({
+        where: { id },
+        include: { operator: true, provider: true },
+      });
+
+      const walletLabel =
+        updated.counterparty === "PROVIDER_MX"
+          ? `Compra proveedor MX · ${updated.provider?.name ?? "—"}`
+          : `Compra operador · ${updated.operator?.name ?? "—"}`;
+      await recordUsdtPurchaseWalletInTx(tx, {
+        purchaseId: id,
+        usdtAmount,
+        label: walletLabel,
+        dayKey: newDayKey,
+        createdAt: fechaOperativa,
+      });
+
       await writeAppAuditLogInTx(tx, {
         userId: user!.id,
         action: "USDT_PURCHASE_UPDATE",
@@ -412,6 +459,7 @@ export async function updateUsdtPurchase(
   revalidatePath(`/compras-usdt/${id}`);
   revalidatePath(`/compras-usdt/${id}/edit`);
   revalidatePath("/dashboard");
+  revalidatePath("/wallet");
   revalidatePath("/estado-financiero");
   revalidatePath("/proveedores");
   revalidatePath("/proveedor-mx");
@@ -457,6 +505,7 @@ export async function deleteUsdtPurchase(
           "Quedan asientos de libro vinculados (p. ej. cuadradora). Elimine o desvincule manualmente antes de borrar la compra.",
         );
       }
+      await deleteWalletMovimientosByReferenciaInTx(tx, id);
       await tx.usdtPurchase.delete({ where: { id } });
       await writeAppAuditLogInTx(tx, {
         userId: user!.id,
@@ -475,6 +524,7 @@ export async function deleteUsdtPurchase(
 
   revalidatePath("/compras-usdt");
   revalidatePath("/dashboard");
+  revalidatePath("/wallet");
   revalidatePath("/estado-financiero");
   revalidatePath("/proveedores");
   revalidatePath("/proveedor-mx");

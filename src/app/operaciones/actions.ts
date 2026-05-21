@@ -24,11 +24,55 @@ import {
 } from "@/lib/otc-allocations-parse";
 import { CLIENT_OTC_ADVANCE_REASON_SUBSTR, clientAdvancePayableNotesMarker } from "@/lib/everex-payable-client-advance";
 import { buildClientAdvancePayableCreditor } from "@/lib/payable-creditor";
+import {
+  applyClientBalanceDeltaInTx,
+  computeOtcBalanceDelta,
+  revertClientBalanceDeltaInTx,
+  type OtcBalanceInput,
+} from "@/lib/client-balance";
+import {
+  deleteWalletMovimientosByReferenciaInTx,
+  deleteWalletMovimientosByReferenciasInTx,
+  recordOperatorUsdtPayoutWalletInTx,
+  recordOtcOperationWalletInTx,
+} from "@/lib/wallet-ledger";
 
 function dec(s: string): Prisma.Decimal {
   const n = normalizeMoneyBackend(s);
   if (n === "" || Number.isNaN(Number(n))) throw new Error("Monto inválido");
   return new Prisma.Decimal(n);
+}
+
+function optDec(raw: string): Prisma.Decimal | null {
+  const t = raw.trim();
+  if (!t) return null;
+  return dec(t);
+}
+
+function parseOtcRealFieldsFromForm(formData: FormData): {
+  fiatRecibidoReal: Prisma.Decimal | null;
+  usdtEntregadoReal: Prisma.Decimal | null;
+} {
+  return {
+    fiatRecibidoReal: optDec(String(formData.get("fiatRecibidoReal") ?? "")),
+    usdtEntregadoReal: optDec(String(formData.get("usdtEntregadoReal") ?? "")),
+  };
+}
+
+function balanceInputFromOp(row: {
+  side: OtcSide;
+  totalFiat: Prisma.Decimal;
+  usdtAmount: Prisma.Decimal;
+  fiatRecibidoReal: Prisma.Decimal | null;
+  usdtEntregadoReal: Prisma.Decimal | null;
+}): OtcBalanceInput {
+  return {
+    side: row.side,
+    totalFiat: row.totalFiat,
+    usdtAmount: row.usdtAmount,
+    fiatRecibidoReal: row.fiatRecibidoReal,
+    usdtEntregadoReal: row.usdtEntregadoReal,
+  };
 }
 
 function formatGtqDiffMessage(totalFiat: Prisma.Decimal, allocsSum: Prisma.Decimal): string {
@@ -69,6 +113,8 @@ function otcAuditJson(op: {
   notes: string | null;
   dayKey: string;
   createdAt: Date;
+  fiatRecibidoReal: Prisma.Decimal | null;
+  usdtEntregadoReal: Prisma.Decimal | null;
 }) {
   return {
     id: op.id,
@@ -78,6 +124,8 @@ function otcAuditJson(op: {
     usdtAmount: op.usdtAmount.toString(),
     rateFiatPerUsdt: op.rateFiatPerUsdt.toString(),
     totalFiat: op.totalFiat.toString(),
+    fiatRecibidoReal: op.fiatRecibidoReal?.toString() ?? null,
+    usdtEntregadoReal: op.usdtEntregadoReal?.toString() ?? null,
     fiatCurrency: op.fiatCurrency,
     pnlBasisGtq: op.pnlBasisGtq.toString(),
     profitGtq: op.profitGtq?.toString() ?? null,
@@ -160,6 +208,7 @@ export async function createOtcOperation(
   const notes = String(formData.get("notes") ?? "").trim() || undefined;
   const operativeInstant = parseOperativeDateTimeFromForm(formData);
   const dayKey = dayKeyFromDateLocal(operativeInstant);
+  const { fiatRecibidoReal, usdtEntregadoReal } = parseOtcRealFieldsFromForm(formData);
 
   const inv = await computeInventoryFromDb();
   const usdtQty = Number(usdtAmount.toString());
@@ -203,15 +252,40 @@ export async function createOtcOperation(
           notes,
           dayKey,
           createdAt: operativeInstant,
+          fiatRecibidoReal,
+          usdtEntregadoReal,
           createdByUserId: user!.id,
         },
       });
+
+      await applyClientBalanceDeltaInTx(
+        tx,
+        clientId,
+        computeOtcBalanceDelta({
+          side,
+          totalFiat,
+          usdtAmount,
+          fiatRecibidoReal,
+          usdtEntregadoReal,
+        }),
+      );
 
       const clientRow = await tx.client.findUnique({
         where: { id: clientId },
         select: { name: true },
       });
       const clientName = clientRow?.name ?? "";
+
+      await recordOtcOperationWalletInTx(tx, {
+        operationId: op.id,
+        side,
+        usdtAmount,
+        usdtEntregadoReal,
+        clientName,
+        ref: op.ref,
+        dayKey: op.dayKey,
+        createdAt: operativeInstant,
+      });
 
       const opCtx = {
         id: op.id,
@@ -238,6 +312,21 @@ export async function createOtcOperation(
         });
 
         await applyOtcAllocationLedgerInTx(tx, allocRow, opCtx, clientName, user!.id);
+
+        if (a.destination === "OPERATOR" && a.currency === "USDT" && a.operatorId) {
+          const opRow = await tx.operator.findUnique({
+            where: { id: a.operatorId },
+            select: { name: true },
+          });
+          await recordOperatorUsdtPayoutWalletInTx(tx, {
+            allocationId: allocRow.id,
+            usdtMonto: a.amount,
+            operatorName: opRow?.name ?? "Operador",
+            operationRef: op.ref,
+            dayKey: op.dayKey,
+            createdAt: operativeInstant,
+          });
+        }
       }
 
       const pendingGtq = totalFiat.sub(pnlBasisGtq);
@@ -270,6 +359,7 @@ export async function createOtcOperation(
 
   revalidatePath("/operaciones");
   revalidatePath("/dashboard");
+  revalidatePath("/wallet");
   revalidatePath("/bancos");
   revalidatePath("/operadores");
   revalidatePath("/deudas");
@@ -389,6 +479,21 @@ export async function addOtcOperationAllocations(
         });
 
         await applyOtcAllocationLedgerInTx(tx, allocRow, opCtx, clientName, user!.id);
+
+        if (a.destination === "OPERATOR" && a.currency === "USDT" && a.operatorId) {
+          const opRow = await tx.operator.findUnique({
+            where: { id: a.operatorId },
+            select: { name: true },
+          });
+          await recordOperatorUsdtPayoutWalletInTx(tx, {
+            allocationId: allocRow.id,
+            usdtMonto: a.amount,
+            operatorName: opRow?.name ?? "Operador",
+            operationRef: op.ref,
+            dayKey: op.dayKey,
+            createdAt: repartoLedgerInstant,
+          });
+        }
       }
 
       const pendingGtq = targetTotalFiat.sub(op.pnlBasisGtq);
@@ -457,6 +562,7 @@ export async function addOtcOperationAllocations(
   revalidatePath("/operaciones");
   revalidatePath(`/operaciones/${operationId}`);
   revalidatePath("/dashboard");
+  revalidatePath("/wallet");
   revalidatePath("/bancos");
   revalidatePath("/operadores");
   revalidatePath("/estado-financiero");
@@ -549,6 +655,8 @@ export async function updateOtcOperation(
   const notes = String(formData.get("notes") ?? "").trim() || undefined;
   const operativeInstant = parseOperativeDateTimeFromForm(formData);
   const dayKey = dayKeyFromDateLocal(operativeInstant);
+  const { fiatRecibidoReal, usdtEntregadoReal } = parseOtcRealFieldsFromForm(formData);
+  const oldBalanceDelta = computeOtcBalanceDelta(balanceInputFromOp(existing));
 
   const inv = await computeInventoryFromDb();
   const usdtQty = Number(usdtAmount.toString());
@@ -607,6 +715,14 @@ export async function updateOtcOperation(
         legacyOperationRefStatementEntries: true,
       });
 
+      await revertClientBalanceDeltaInTx(tx, existing.clientId, oldBalanceDelta);
+
+      await deleteWalletMovimientosByReferenciaInTx(tx, operationId);
+      await deleteWalletMovimientosByReferenciasInTx(
+        tx,
+        existing.allocations.map((a) => a.id),
+      );
+
       await tx.otcAllocation.deleteMany({ where: { operationId } });
 
       if (linkedPayables.length > 0) {
@@ -636,6 +752,8 @@ export async function updateOtcOperation(
           notes,
           dayKey,
           createdAt: operativeInstant,
+          fiatRecibidoReal,
+          usdtEntregadoReal,
           mxnLiquidation: null,
           usdtPipelineReceived: null,
           gtqPaidToClient: null,
@@ -643,8 +761,31 @@ export async function updateOtcOperation(
         },
       });
 
+      await applyClientBalanceDeltaInTx(
+        tx,
+        clientId,
+        computeOtcBalanceDelta({
+          side,
+          totalFiat,
+          usdtAmount,
+          fiatRecibidoReal,
+          usdtEntregadoReal,
+        }),
+      );
+
       const opAfter = await tx.otcOperation.findUniqueOrThrow({
         where: { id: operationId },
+      });
+
+      await recordOtcOperationWalletInTx(tx, {
+        operationId: opAfter.id,
+        side,
+        usdtAmount,
+        usdtEntregadoReal,
+        clientName,
+        ref: opAfter.ref,
+        dayKey: opAfter.dayKey,
+        createdAt: operativeInstant,
       });
 
       const opCtx = {
@@ -671,6 +812,21 @@ export async function updateOtcOperation(
           },
         });
         await applyOtcAllocationLedgerInTx(tx, allocRow, opCtx, clientName, user!.id);
+
+        if (a.destination === "OPERATOR" && a.currency === "USDT" && a.operatorId) {
+          const opRow = await tx.operator.findUnique({
+            where: { id: a.operatorId },
+            select: { name: true },
+          });
+          await recordOperatorUsdtPayoutWalletInTx(tx, {
+            allocationId: allocRow.id,
+            usdtMonto: a.amount,
+            operatorName: opRow?.name ?? "Operador",
+            operationRef: opAfter.ref,
+            dayKey: opAfter.dayKey,
+            createdAt: operativeInstant,
+          });
+        }
       }
 
       const pendingGtq = totalFiat.sub(pnlBasisGtq);
@@ -713,6 +869,7 @@ export async function updateOtcOperation(
   revalidatePath("/operaciones");
   revalidatePath(`/operaciones/${operationId}`);
   revalidatePath("/dashboard");
+  revalidatePath("/wallet");
   revalidatePath("/bancos");
   revalidatePath("/operadores");
   revalidatePath("/deudas");
@@ -768,6 +925,14 @@ export async function deleteOtcOperation(
         legacyOperationRefStatementEntries: true,
       });
 
+      await revertClientBalanceDeltaInTx(tx, op.clientId, computeOtcBalanceDelta(balanceInputFromOp(op)));
+
+      await deleteWalletMovimientosByReferenciaInTx(tx, op.id);
+      await deleteWalletMovimientosByReferenciasInTx(
+        tx,
+        op.allocations.map((a) => a.id),
+      );
+
       if (linkedPayables.length > 0) {
         await tx.everexPayable.deleteMany({
           where: { id: { in: linkedPayables.map((x) => x.id) } },
@@ -793,6 +958,7 @@ export async function deleteOtcOperation(
 
   revalidatePath("/operaciones");
   revalidatePath("/dashboard");
+  revalidatePath("/wallet");
   revalidatePath("/bancos");
   revalidatePath("/operadores");
   revalidatePath("/proveedores");
