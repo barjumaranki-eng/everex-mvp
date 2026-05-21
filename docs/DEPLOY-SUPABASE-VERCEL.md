@@ -111,11 +111,13 @@ git push origin main
 
 En Vercel: **Import Project** → repo → Framework **Next.js** (detecta `vercel.json`).
 
-`vercel.json` ejecuta:
+`vercel.json` ejecuta solo:
 
 ```text
-prisma generate && prisma migrate deploy && next build
+next build
 ```
+
+(`postinstall` en `package.json` corre `prisma generate` en `npm install`, no en el build.)
 
 ### Tras el primer deploy
 
@@ -147,7 +149,7 @@ git add prisma/migrations
 git push
 ```
 
-Vercel aplicará `migrate deploy` en cada build.
+Las migraciones se aplican **manualmente** (local/CI con `DIRECT_URL`), no en el build de Vercel.
 
 ---
 
