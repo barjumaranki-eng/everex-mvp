@@ -1,10 +1,9 @@
 import {
+  OtcSide,
   Prisma,
   WalletMovimientoOrigen,
   WalletMovimientoTipo,
-  type OtcSide,
 } from "@prisma/client";
-import { OtcSide as OtcSideEnum } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { purchaseWhereForInventory } from "@/lib/inventory";
 
@@ -81,7 +80,7 @@ export async function recordOtcOperationWalletInTx(
   },
 ): Promise<void> {
   const monto = usdtMontoEfectivoOtc(params.side, params.usdtAmount, params.usdtEntregadoReal);
-  if (params.side === OtcSideEnum.CLIENT_SELLS_USDT) {
+  if (params.side === OtcSide.CLIENT_SELLS_USDT) {
     await createWalletMovimientoInTx(tx, {
       tipo: WalletMovimientoTipo.ENTRADA,
       origen: WalletMovimientoOrigen.CLIENTE_VENDE,
@@ -93,7 +92,7 @@ export async function recordOtcOperationWalletInTx(
     });
     return;
   }
-  if (params.side === OtcSideEnum.CLIENT_BUYS_USDT) {
+  if (params.side === OtcSide.CLIENT_BUYS_USDT) {
     await createWalletMovimientoInTx(tx, {
       tipo: WalletMovimientoTipo.SALIDA,
       origen: WalletMovimientoOrigen.VENTA_CLIENTE,
@@ -190,6 +189,26 @@ export type WalletSummary = {
   totalSalidas: number;
   movimientoCount: number;
 };
+
+export type WalletLedgerPage = {
+  rows: WalletLedgerRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export const EMPTY_WALLET_SUMMARY: WalletSummary = {
+  saldoUsdt: 0,
+  avgGtqPerUsdt: 0,
+  totalEntradas: 0,
+  totalSalidas: 0,
+  movimientoCount: 0,
+};
+
+export function emptyWalletLedgerPage(pageSize: number, page = 1): WalletLedgerPage {
+  return { rows: [], total: 0, page, pageSize, totalPages: 1 };
+}
 
 function signedAmount(tipo: WalletMovimientoTipo, monto: number): number {
   return tipo === WalletMovimientoTipo.ENTRADA ? monto : -monto;
@@ -305,13 +324,7 @@ export function origenLabel(origen: WalletMovimientoOrigen): string {
   return ORIGEN_LABEL[origen] ?? origen;
 }
 
-export async function loadWalletLedgerPage(page: number, pageSize: number): Promise<{
-  rows: WalletLedgerRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-}> {
+export async function loadWalletLedgerPage(page: number, pageSize: number): Promise<WalletLedgerPage> {
   const total = await prisma.walletMovimiento.count();
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(Math.max(1, page), totalPages);
@@ -362,13 +375,14 @@ export async function loadWalletLedgerPage(page: number, pageSize: number): Prom
 
 /** Backfill wallet desde datos históricos (compras inventario, OTC, liquidaciones operador). */
 export async function backfillWalletMovimientosFromDb(): Promise<{ created: number }> {
-  const existing = await prisma.walletMovimiento.count();
-  if (existing > 0) {
-    return { created: 0 };
-  }
+  try {
+    const existing = await prisma.walletMovimiento.count();
+    if (existing > 0) {
+      return { created: 0 };
+    }
 
-  let created = 0;
-  await prisma.$transaction(async (tx) => {
+    let created = 0;
+    await prisma.$transaction(async (tx) => {
     const purchases = await tx.usdtPurchase.findMany({
       where: purchaseWhereForInventory(),
       include: { operator: true, provider: true },
@@ -438,7 +452,11 @@ export async function backfillWalletMovimientosFromDb(): Promise<{ created: numb
       });
       created += 1;
     }
-  });
+    });
 
-  return { created };
+    return { created };
+  } catch (err) {
+    console.error("[wallet] backfillWalletMovimientosFromDb", err);
+    return { created: 0 };
+  }
 }

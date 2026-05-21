@@ -13,7 +13,6 @@ import {
   canViewTreasurySensitiveModules,
   canRunOperations,
   canViewEstadoFinanciero,
-  canViewWallet,
   usesOperationalDashboard,
 } from "@/lib/authz";
 
@@ -148,7 +147,7 @@ export async function Nav() {
           </Link>
         ) : null}
 
-        {canViewWallet(user) ? (
+        {user.role === UserRole.ADMIN ? (
           <Link className="text-blue-700 underline" href="/wallet">
             Wallet USDT
           </Link>

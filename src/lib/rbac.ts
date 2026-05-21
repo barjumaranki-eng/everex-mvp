@@ -46,6 +46,7 @@ const RE = {
   estadoFin: /^\/estado-financiero(\/.*)?$/,
   conciliacion: /^\/conciliacion-bancaria(\/.*)?$/,
   saldosIniciales: /^\/bancos\/saldos-iniciales(\/.*)?$/,
+  wallet: /^\/wallet(\/.*)?$/,
 };
 
 export function canAccessPathname(role: AppUserRole, pathname: string): boolean {
@@ -121,6 +122,7 @@ export function canAccessPathname(role: AppUserRole, pathname: string): boolean 
       RE.deudas,
       RE.conciliacion,
       RE.gastos,
+      RE.wallet,
     ]);
   }
 

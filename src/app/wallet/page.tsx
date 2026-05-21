@@ -7,9 +7,13 @@ import { formatMoneyDisplay } from "@/lib/format-money";
 import { formatRateDisplay } from "@/lib/format-rate";
 import {
   backfillWalletMovimientosFromDb,
+  EMPTY_WALLET_SUMMARY,
+  emptyWalletLedgerPage,
   loadWalletLedgerPage,
   loadWalletSummary,
   origenLabel,
+  type WalletLedgerPage,
+  type WalletSummary,
 } from "@/lib/wallet-ledger";
 
 export const dynamic = "force-dynamic";
@@ -21,17 +25,45 @@ export default async function WalletPage({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await getSessionUser();
+  let user;
+  try {
+    user = await getSessionUser();
+  } catch (err) {
+    console.error("[wallet] getSessionUser", err);
+    redirect("/login");
+  }
+
   if (!user) redirect("/login");
-  if (!canViewWallet(user)) redirect("/dashboard?error=" + encodeURIComponent("Sin acceso a Wallet USDT"));
+  if (!canViewWallet(user)) {
+    redirect("/dashboard?error=" + encodeURIComponent("Sin acceso a Wallet USDT"));
+  }
 
-  const sp = (await searchParams) ?? {};
-  const pageRaw = typeof sp.page === "string" ? Number(sp.page) : 1;
-  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+  let page = 1;
+  try {
+    const sp = (await searchParams) ?? {};
+    const pageRaw = typeof sp.page === "string" ? Number(sp.page) : 1;
+    page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+  } catch (err) {
+    console.error("[wallet] searchParams", err);
+  }
 
-  await backfillWalletMovimientosFromDb();
+  let summary: WalletSummary = EMPTY_WALLET_SUMMARY;
+  let ledger: WalletLedgerPage = emptyWalletLedgerPage(PAGE_SIZE, page);
+  let loadError: string | null = null;
 
-  const [summary, ledger] = await Promise.all([loadWalletSummary(), loadWalletLedgerPage(page, PAGE_SIZE)]);
+  try {
+    await backfillWalletMovimientosFromDb();
+    const [summaryResult, ledgerResult] = await Promise.all([
+      loadWalletSummary(),
+      loadWalletLedgerPage(page, PAGE_SIZE),
+    ]);
+    summary = summaryResult;
+    ledger = ledgerResult;
+  } catch (err) {
+    console.error("[wallet] load", err);
+    loadError =
+      "No se pudo cargar el libro wallet (base de datos o migración pendiente). Los saldos pueden estar incompletos.";
+  }
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6">
@@ -39,6 +71,12 @@ export default async function WalletPage({
       <p className="mt-1 text-sm text-zinc-600">
         Libro mayor de inventario USDT. Cada compra, venta OTC y pago a operador genera una línea automática.
       </p>
+
+      {loadError ? (
+        <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          {loadError}
+        </p>
+      ) : null}
 
       <section className="mt-6 grid gap-3 sm:grid-cols-3">
         <div className="rounded border border-emerald-200 bg-emerald-50/70 p-4">
