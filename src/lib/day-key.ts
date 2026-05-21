@@ -1,7 +1,6 @@
-/** Día local YYYY-MM-DD (America/Guatemala por defecto del servidor). */
+import { BUSINESS_TIMEZONE, formatDayKeyInTimeZone } from "@/lib/business-timezone";
+
+/** Día operativo actual (America/Guatemala), formato YYYY-MM-DD. */
 export function todayDayKey(d = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return formatDayKeyInTimeZone(d, BUSINESS_TIMEZONE);
 }

@@ -13,7 +13,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
 import { computeInventoryFromDb, type InventoryDiagnostics, type InventoryPurchaseRowDebug } from "@/lib/inventory";
 import { todayDayKey } from "@/lib/day-key";
-import { prismaWhereCreatedInDayRange } from "@/lib/operative-datetime";
+import { prismaWhereDayKeyInRange } from "@/lib/operative-datetime";
 import { formatMoneyDisplay } from "@/lib/format-money";
 import { formatRateDisplay } from "@/lib/format-rate";
 import { EST_GTQ_PER_USD, gtqToUsdtEquiv } from "@/lib/fx";
@@ -126,20 +126,20 @@ async function loadDashboardData(user: User): Promise<DashboardLoaded> {
           diagnostics: EMPTY_INVENTORY_DIAGNOSTICS,
         }),
     prisma.otcOperation.findMany({
-      where: { AND: [prismaWhereCreatedInDayRange(dayKey, dayKey)] },
+      where: prismaWhereDayKeyInRange(dayKey, dayKey),
       select: showSensitiveProfit
         ? { side: true, usdtAmount: true, profitGtq: true, profitUsd: true, profitUsdt: true }
         : { side: true, usdtAmount: true },
     }),
     showSensitiveProfit
       ? prisma.otcMxnSpread.aggregate({
-          where: prismaWhereCreatedInDayRange(dayKey, dayKey),
+          where: prismaWhereDayKeyInRange(dayKey, dayKey),
           _sum: { profitUsdt: true },
         })
       : Promise.resolve({ _sum: { profitUsdt: null as null } }),
     prisma.usdtPurchase.findMany({
       where: {
-        AND: [{ counterparty: PurchaseCounterparty.PROVIDER_MX }, prismaWhereCreatedInDayRange(dayKey, dayKey)],
+        AND: [{ counterparty: PurchaseCounterparty.PROVIDER_MX }, prismaWhereDayKeyInRange(dayKey, dayKey)],
       },
       select: { amountMxn: true, usdtAmount: true, rateXe: true, gtqTotal: true },
     }),
@@ -150,7 +150,7 @@ async function loadDashboardData(user: User): Promise<DashboardLoaded> {
     showMiniFin ? getTodayAndMonthSummary(dayKey) : Promise.resolve(null),
     showSensitiveProfit
       ? prisma.operatorMxnUsdtSettlement.aggregate({
-          where: prismaWhereCreatedInDayRange(dayKey, dayKey),
+          where: prismaWhereDayKeyInRange(dayKey, dayKey),
           _sum: { usdtPaid: true, diffUsdt: true },
         })
       : Promise.resolve({ _sum: { usdtPaid: null as null, diffUsdt: null as null } }),

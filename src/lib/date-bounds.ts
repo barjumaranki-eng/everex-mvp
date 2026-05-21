@@ -1,13 +1,11 @@
-/** Calendar month as dayKeys YYYY-MM-DD in local time (matches `todayDayKey` / gastos / libro operador). */
+import { formatDayKeyInTimeZone } from "@/lib/business-timezone";
+
+/** Mes calendario como dayKeys YYYY-MM-DD en zona operativa (America/Guatemala). */
 export function getMonthBoundsDayKeys(date = new Date()) {
-  const y = date.getFullYear();
-  const m = date.getMonth();
-  const start = new Date(y, m, 1);
-  const end = new Date(y, m + 1, 0);
-  const format = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  return {
-    startDayKey: format(start),
-    endDayKey: format(end),
-  };
+  const anchor = formatDayKeyInTimeZone(date);
+  const [y, m] = anchor.split("-").map(Number);
+  const startDayKey = `${y}-${String(m).padStart(2, "0")}-01`;
+  const lastDom = new Date(y, m, 0).getDate();
+  const endDayKey = `${y}-${String(m).padStart(2, "0")}-${String(lastDom).padStart(2, "0")}`;
+  return { startDayKey, endDayKey };
 }

@@ -1,11 +1,9 @@
+import { businessWallClockToUtc, formatDayKeyInTimeZone } from "@/lib/business-timezone";
 import { parseDayEndExclusiveLocal, parseDayStartLocal } from "@/lib/operator-statement-dates";
 
-/** Fecha local YYYY-MM-DD a partir de un instante (reloj del servidor). */
+/** dayKey YYYY-MM-DD del instante en zona operativa (America/Guatemala). */
 export function dayKeyFromDateLocal(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return formatDayKeyInTimeZone(d);
 }
 
 /**
@@ -31,7 +29,14 @@ export function parseOperativeDateTimeFromForm(
       timePart = `${hh}:${mm}:${ss}`;
     }
   }
-  const parsed = new Date(`${dStr}T${timePart}`);
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dStr);
+  if (!dm) return new Date(fallback.getTime());
+  const y = Number(dm[1]);
+  const mo = Number(dm[2]);
+  const day = Number(dm[3]);
+  const tm = /^(\d{2}):(\d{2}):(\d{2})$/.exec(timePart);
+  if (!tm) return new Date(fallback.getTime());
+  const parsed = businessWallClockToUtc(y, mo, day, Number(tm[1]), Number(tm[2]), Number(tm[3]));
   if (Number.isNaN(parsed.getTime())) return new Date(fallback.getTime());
   return parsed;
 }
@@ -61,6 +66,15 @@ export function prismaWhereCreatedInDayRange(startDay: string, endDay: string) {
   const r = operativeDayRangeWhere(startDay, endDay);
   if (!r) return { id: { in: [] as string[] } };
   return { createdAt: { gte: r.gte, lt: r.lt } };
+}
+
+/** Filtro por `dayKey` (fecha operativa guardada al crear el registro). Preferir en dashboard. */
+export function prismaWhereDayKeyInRange(startDay: string, endDay: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDay) || !/^\d{4}-\d{2}-\d{2}$/.test(endDay)) {
+    return { id: { in: [] as string[] } };
+  }
+  if (startDay === endDay) return { dayKey: startDay };
+  return { dayKey: { gte: startDay, lte: endDay } };
 }
 
 /** Filtro por `date` (movimientos bancarios). */

@@ -2,7 +2,7 @@ import { FiatCurrency, OtcSide, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { EST_GTQ_PER_USD } from "@/lib/fx";
 import { isClientOtcAdvancePayable } from "@/lib/everex-payable-client-advance";
-import { prismaWhereCreatedInDayRange } from "@/lib/operative-datetime";
+import { prismaWhereDayKeyInRange } from "@/lib/operative-datetime";
 
 /** Solo se agrega a totales GTQ del “mini estado”; otras monedas se listan aparte. */
 export function gtqOnlyAmount(amount: Prisma.Decimal, currency: FiatCurrency): number {
@@ -38,30 +38,30 @@ export async function getFinancialSummary(startDay: string, endDay: string): Pro
   const [otcAgg, otcUsdtAgg, spreadAgg, expenses, debtPays, recvPays, recvOpen, payOpen] = await Promise.all([
     prisma.otcOperation.aggregate({
       where: {
-        AND: [{ side: OtcSide.CLIENT_BUYS_USDT }, prismaWhereCreatedInDayRange(startDay, endDay)],
+        AND: [{ side: OtcSide.CLIENT_BUYS_USDT }, prismaWhereDayKeyInRange(startDay, endDay)],
       },
       _sum: { profitGtq: true },
     }),
     prisma.otcOperation.aggregate({
       where: {
-        AND: [{ side: OtcSide.CLIENT_BUYS_USDT }, prismaWhereCreatedInDayRange(startDay, endDay)],
+        AND: [{ side: OtcSide.CLIENT_BUYS_USDT }, prismaWhereDayKeyInRange(startDay, endDay)],
       },
       _sum: { profitUsdt: true },
     }),
     prisma.otcMxnSpread.aggregate({
-      where: prismaWhereCreatedInDayRange(startDay, endDay),
+      where: prismaWhereDayKeyInRange(startDay, endDay),
       _sum: { profitUsdt: true },
     }),
     prisma.expense.findMany({
-      where: { AND: [prismaWhereCreatedInDayRange(startDay, endDay)] },
+      where: prismaWhereDayKeyInRange(startDay, endDay),
       select: { amount: true, currency: true },
     }),
     prisma.everexPayablePayment.findMany({
-      where: prismaWhereCreatedInDayRange(startDay, endDay),
+      where: prismaWhereDayKeyInRange(startDay, endDay),
       select: { amount: true, currency: true },
     }),
     prisma.clientReceivablePayment.findMany({
-      where: { AND: [prismaWhereCreatedInDayRange(startDay, endDay)] },
+      where: prismaWhereDayKeyInRange(startDay, endDay),
       select: { amount: true, currency: true },
     }),
     prisma.clientReceivable.findMany({

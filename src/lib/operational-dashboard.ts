@@ -7,7 +7,7 @@ import { monthBoundsDayKeys } from "@/lib/day-range";
 import { getBankBalanceBreakdown } from "@/lib/bank-balance";
 import { OTC_ALLOC_TOTAL_EPS } from "@/lib/otc-allocations-parse";
 import { computeInventoryFromDb } from "@/lib/inventory";
-import { prismaWhereCreatedInDayRange } from "@/lib/operative-datetime";
+import { prismaWhereDayKeyInRange } from "@/lib/operative-datetime";
 
 const RECENT_MESA_DAYS = 21;
 /** Ventana para contar gastos/pagos/mov. sin soporte o referencia (solo conteos en dashboard operativo). */
@@ -199,14 +199,14 @@ export async function loadOperationalDashboardSnapshot(): Promise<OperationalDas
               },
             ],
           },
-          prismaWhereCreatedInDayRange(dayKey, dayKey),
+          prismaWhereDayKeyInRange(dayKey, dayKey),
         ],
       },
       select: { gtqTotal: true, usdtAmount: true },
     }),
     prisma.usdtPurchase.findMany({
       where: {
-        AND: [{ counterparty: PurchaseCounterparty.PROVIDER_MX }, prismaWhereCreatedInDayRange(dayKey, dayKey)],
+        AND: [{ counterparty: PurchaseCounterparty.PROVIDER_MX }, prismaWhereDayKeyInRange(dayKey, dayKey)],
       },
       select: { usdtAmount: true },
     }),
