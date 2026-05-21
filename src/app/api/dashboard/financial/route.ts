@@ -4,6 +4,8 @@ import { getTodayAndMonthSummary } from "@/lib/financial-summary";
 import { todayDayKey } from "@/lib/day-key";
 import { getSessionUser } from "@/lib/session";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Resumen financiero (mini estado / métricas). Solo ADMIN.
  * Roles operativos reciben 403 aunque conozcan la URL.

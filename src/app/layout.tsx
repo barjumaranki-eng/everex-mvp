@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Nav } from "@/app/components/Nav";
 
+/** Nav usa cookies (getSessionUser); evita static generation en build (Vercel). */
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Everex MVP",
   description: "Control operativo mesa OTC",
